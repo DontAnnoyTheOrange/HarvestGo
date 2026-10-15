@@ -1,0 +1,16 @@
+# dependencies and build output
+node_modules/
+dist/
+.next/
+coverage/
+
+# SECRETS: never commit these
+.env
+.env.*
+!.env.example
+
+# misc
+*.log
+.DS_Store
+test-results/
+playwright-report/

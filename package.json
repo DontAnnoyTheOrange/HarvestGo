@@ -1,0 +1,24 @@
+{
+  "name": "harvestgo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "HarvestGo: farm operations monitoring and compliance documentation system for Kabutihan Farm",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build:shared": "npm run build -w @harvestgo/shared",
+    "dev": "npm run build:shared && concurrently -n api,web -c green,blue \"npm run dev -w @harvestgo/api\" \"npm run dev -w @harvestgo/web\"",
+    "build": "npm run build:shared && npm run build -w @harvestgo/api && npm run build -w @harvestgo/web",
+    "typecheck": "npm run build:shared && npm run typecheck -w @harvestgo/api && npm run typecheck -w @harvestgo/web",
+    "test": "npm run build:shared && npm run test -w @harvestgo/api"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "typescript": "^7.0.2"
+  }
+}
