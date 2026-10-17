@@ -3,12 +3,15 @@ import express from 'express';
 import helmet from 'helmet';
 import { csrfGuard } from './middleware/csrf.js';
 import { errorHandler, notFound } from './middleware/errors.js';
+import { createActivitiesRouter } from './routes/activities.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createCropCategoriesRouter, createCropsRouter } from './routes/crops.js';
 import { createDashboardRouter } from './routes/dashboard.js';
 import { createExpensesRouter } from './routes/expenses.js';
 import { createHarvestsRouter } from './routes/harvests.js';
 import { healthRouter } from './routes/health.js';
+import { createIssuesRouter } from './routes/issues.js';
+import { createParticipantTypesRouter } from './routes/participantTypes.js';
 import { createSalesRouter } from './routes/sales.js';
 import { createUsersRouter } from './routes/users.js';
 
@@ -29,6 +32,9 @@ export function createApp() {
   app.use('/api/v1/expenses', createExpensesRouter());
   app.use('/api/v1/sales', createSalesRouter());
   app.use('/api/v1/dashboard', createDashboardRouter());
+  app.use('/api/v1/participant-types', createParticipantTypesRouter());
+  app.use('/api/v1/activities', createActivitiesRouter());
+  app.use('/api/v1/issues', createIssuesRouter());
 
   app.use(notFound);
   app.use(errorHandler);
