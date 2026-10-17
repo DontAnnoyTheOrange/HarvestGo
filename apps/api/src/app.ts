@@ -5,8 +5,11 @@ import { csrfGuard } from './middleware/csrf.js';
 import { errorHandler, notFound } from './middleware/errors.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createCropCategoriesRouter, createCropsRouter } from './routes/crops.js';
+import { createDashboardRouter } from './routes/dashboard.js';
+import { createExpensesRouter } from './routes/expenses.js';
 import { createHarvestsRouter } from './routes/harvests.js';
 import { healthRouter } from './routes/health.js';
+import { createSalesRouter } from './routes/sales.js';
 import { createUsersRouter } from './routes/users.js';
 
 export function createApp() {
@@ -23,6 +26,9 @@ export function createApp() {
   app.use('/api/v1/crop-categories', createCropCategoriesRouter());
   app.use('/api/v1/crops', createCropsRouter());
   app.use('/api/v1/harvests', createHarvestsRouter());
+  app.use('/api/v1/expenses', createExpensesRouter());
+  app.use('/api/v1/sales', createSalesRouter());
+  app.use('/api/v1/dashboard', createDashboardRouter());
 
   app.use(notFound);
   app.use(errorHandler);

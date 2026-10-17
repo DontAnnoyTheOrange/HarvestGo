@@ -22,6 +22,8 @@ const icons = {
   harvest: 'M12 22V10M12 10C12 6 9 4 5 4c0 4 2 6 7 6zM12 13c0-3 2-5 6-5 0 3-2 5-6 5z',
   crops: 'M4 20h16M7 20V9l5-5 5 5v11M10 20v-5h4v5',
   users: 'M16 11a4 4 0 10-8 0 4 4 0 008 0zM4 21c0-4 3.5-6 8-6s8 2 8 6',
+  expenses: 'M3 7h18v12H3zM3 7l3-3h12l3 3M16 13h2',
+  sales: 'M3 5h2l2 10h10l2-7H6M9 20a1 1 0 100-2 1 1 0 000 2zM17 20a1 1 0 100-2 1 1 0 000 2z',
 } as const;
 
 function Icon({ name }: { name: keyof typeof icons }) {
@@ -39,7 +41,14 @@ interface NavGroup { label?: string; items: NavItem[] }
 function menuFor(role: Role): NavGroup[] {
   const groups: NavGroup[] = [
     { items: [{ href: '/dashboard', label: 'Dashboard', icon: 'dashboard' }] },
-    { label: 'Farm records', items: [{ href: '/harvests', label: 'Harvests', icon: 'harvest' }] },
+    {
+      label: 'Farm records',
+      items: [
+        { href: '/harvests', label: 'Harvests', icon: 'harvest' },
+        { href: '/expenses', label: 'Expenses', icon: 'expenses' },
+        { href: '/sales', label: 'Sales', icon: 'sales' },
+      ],
+    },
   ];
   if (role === 'general_manager') {
     groups.push({
