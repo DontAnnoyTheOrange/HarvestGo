@@ -25,6 +25,7 @@ const icons = {
   expenses: 'M3 7h18v12H3zM3 7l3-3h12l3 3M16 13h2',
   sales: 'M3 5h2l2 10h10l2-7H6M9 20a1 1 0 100-2 1 1 0 000 2zM17 20a1 1 0 100-2 1 1 0 000 2z',
   activities: 'M8 7V3M16 7V3M4 11h16M5 5h14v16H5z',
+  documents: 'M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6',
   issues: 'M12 9v4M12 17h.01M10.3 3.9L2.4 18a2 2 0 001.7 3h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z',
 } as const;
 
@@ -52,10 +53,11 @@ function menuFor(role: Role): NavGroup[] {
       ],
     },
     {
-      label: 'Services and issues',
+      label: 'Services, issues and files',
       items: [
         { href: '/activities', label: 'Activities', icon: 'activities' },
         { href: '/issues', label: 'Issues', icon: 'issues' },
+        { href: '/documents', label: 'Documents', icon: 'documents' },
       ],
     },
   ];

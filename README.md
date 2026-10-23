@@ -59,6 +59,8 @@ Bash
 git clone <repository-url> harvestgo
 cd harvestgo
 npm install
+npm install multer sharp file-type -w @harvestgo/api
+npm install -D @types/multer -w @harvestgo/api
 
 2. Configure Environment Variables
 Create a root .env file based on your local configuration requirements. Never commit or share your secret keys.

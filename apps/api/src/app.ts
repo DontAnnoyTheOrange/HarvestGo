@@ -7,6 +7,7 @@ import { createActivitiesRouter } from './routes/activities.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createCropCategoriesRouter, createCropsRouter } from './routes/crops.js';
 import { createDashboardRouter } from './routes/dashboard.js';
+import { createDocumentsRouter } from './routes/documents.js';
 import { createExpensesRouter } from './routes/expenses.js';
 import { createHarvestsRouter } from './routes/harvests.js';
 import { healthRouter } from './routes/health.js';
@@ -35,6 +36,7 @@ export function createApp() {
   app.use('/api/v1/participant-types', createParticipantTypesRouter());
   app.use('/api/v1/activities', createActivitiesRouter());
   app.use('/api/v1/issues', createIssuesRouter());
+  app.use('/api/v1/documents', createDocumentsRouter());
 
   app.use(notFound);
   app.use(errorHandler);
