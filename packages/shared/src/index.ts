@@ -107,3 +107,4 @@ export type ManagedUser = z.infer<typeof managedUserSchema>;
 export * from './farm.js';
 export * from './finance.js';
 export * from './activities.js';
+export * from './documents.js';
