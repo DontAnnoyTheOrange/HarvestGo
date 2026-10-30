@@ -1,4 +1,4 @@
-import puppeteer, { type Browser } from 'puppeteer';
+import type { Browser } from 'puppeteer';
 import { HttpError, ServiceUnavailableError } from '../utils/errors.js';
 
 export interface PdfJob {
@@ -9,9 +9,35 @@ export interface PdfJob {
   margin: { top: string; right: string; bottom: string; left: string };
 }
 
-const RENDER_TIMEOUT_MS = 30_000;
+const RENDER_TIMEOUT_MS = 55_000; // a first report on a serverless host also has to fetch the browser
 const IDLE_CLOSE_MS = 2 * 60_000; // give the memory back after 2 quiet minutes
 const MAX_WAITING = 3; // at most 3 reports waiting in line; more get "busy, try again"
+
+export type PdfEngine = 'local' | 'serverless';
+
+/**
+ * Which Chrome to use.
+ * - "local": the normal Chrome that Puppeteer downloads (your computer, or a server you control, e.g. a Docker host).
+ * - "serverless": a small Chromium made for hosts like Vercel, where the normal Chrome cannot run.
+ * It is chosen automatically (Vercel and AWS Lambda are detected) and can be forced with PDF_ENGINE=local or serverless.
+ */
+export function choosePdfEngine(env: NodeJS.ProcessEnv = process.env): PdfEngine {
+  if (env.PDF_ENGINE === 'local' || env.PDF_ENGINE === 'serverless') return env.PDF_ENGINE;
+  return env.VERCEL || env.AWS_LAMBDA_FUNCTION_NAME || env.AWS_EXECUTION_ENV ? 'serverless' : 'local';
+}
+
+/**
+ * The version of the small serverless browser. It MUST match the installed package
+ * "@sparticuz/chromium-min" (pinned to this exact version in apps/api/package.json; a test checks they agree).
+ */
+export const CHROMIUM_PACK_VERSION = '153.0.0';
+
+/** Where the small serverless browser is downloaded from (once per cold start). Can be replaced with CHROMIUM_PACK_URL. */
+export function chromiumPackUrl(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.CHROMIUM_PACK_URL) return env.CHROMIUM_PACK_URL;
+  const v = CHROMIUM_PACK_VERSION;
+  return `https://github.com/Sparticuz/chromium/releases/download/v${v}/chromium-v${v}-pack.x64.tar`;
+}
 
 /**
  * Turns a web page into a PDF using a hidden Chrome browser.
@@ -39,16 +65,33 @@ export class PdfRenderer {
     }
   }
 
-  private async ensureBrowser(): Promise<Browser> {
-    if (this.browser?.connected) return this.browser;
+  private async launch(): Promise<Browser> {
     const args = ['--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--disable-extensions'];
     // Some servers (containers) need this. Only turn it on there: PDF_NO_SANDBOX=true
     if (process.env.PDF_NO_SANDBOX === 'true') args.push('--no-sandbox');
     if (process.env.PDF_EXTRA_ARGS) args.push(...process.env.PDF_EXTRA_ARGS.split(' ').filter(Boolean));
+
+    if (choosePdfEngine() === 'serverless') {
+      const chromium = (await import('@sparticuz/chromium-min')).default;
+      const puppeteer = (await import('puppeteer-core')).default;
+      const browser = await puppeteer.launch({
+        args: [...chromium.args, ...args],
+        executablePath: await chromium.executablePath(chromiumPackUrl()),
+        headless: 'shell',
+      });
+      return browser as unknown as Browser;
+    }
+
+    const puppeteer = (await import('puppeteer')).default;
+    return puppeteer.launch({ headless: process.env.PDF_HEADLESS === 'shell' ? 'shell' : true, args });
+  }
+
+  private async ensureBrowser(): Promise<Browser> {
+    if (this.browser?.connected) return this.browser;
     try {
-      this.browser = await puppeteer.launch({ headless: process.env.PDF_HEADLESS === 'shell' ? 'shell' : true, args });
+      this.browser = await this.launch();
     } catch (err) {
-      throw new ServiceUnavailableError(`could not start the PDF browser: ${err instanceof Error ? err.message : String(err)}`);
+      throw new ServiceUnavailableError(`could not start the PDF browser (${choosePdfEngine()} engine): ${err instanceof Error ? err.message : String(err)}`);
     }
     this.browser.on('disconnected', () => {
       this.browser = null;
