@@ -44,3 +44,36 @@ export async function apiFetch<T>(
   }
   return data as T;
 }
+
+/** Fetches a protected binary response, preserving the same CSRF and error behavior as apiFetch. */
+export async function apiFetchBlob(
+  path: string,
+  options: { method?: 'POST'; json: unknown },
+): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1${path}`, {
+      method: options.method ?? 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {
+        [CSRF_HEADER]: CSRF_VALUE,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(options.json),
+    });
+  } catch {
+    throw new ApiRequestError(0, 'NETWORK', 'Cannot reach the server. Check your internet connection.');
+  }
+  if (!res.ok) {
+    const data: unknown = await res.json().catch(() => null);
+    const parsed = apiErrorSchema.safeParse(data);
+    throw new ApiRequestError(
+      res.status,
+      parsed.success ? parsed.data.error.code : 'UNKNOWN',
+      parsed.success ? parsed.data.error.message : 'Something went wrong. Please try again.',
+      parsed.success ? parsed.data.error.details : undefined,
+    );
+  }
+  return res.blob();
+}

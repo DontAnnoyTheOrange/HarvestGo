@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { reportDataSchema } from '@harvestgo/shared';
+import {
+  reportDataSchema,
+  reportTemplateDocumentSchema,
+  type ReportTemplateDocument,
+  type ReportTemplatePreviewInput,
+} from '@harvestgo/shared';
 import type {
   GenerateReportInput, ListReportsQuery, ReportData, ReportList, ReportRecord, ReportUrl,
 } from '@harvestgo/shared';
@@ -11,6 +16,7 @@ import { HttpError, ServiceUnavailableError } from '../utils/errors.js';
 import { embeddedFontCss } from '../reports/fonts.js';
 import { pdfRenderer } from '../reports/pdfRenderer.js';
 import { PDF_MARGIN, footerTemplate, pageDimensions, renderReportHtml } from '../reports/reportHtml.js';
+import { isDocumentTemplate, renderReportDocumentHtml, type DocumentPhoto } from '../reports/documentRenderer.js';
 import { DOCUMENTS_BUCKET } from './documentService.js';
 import { getActiveTemplate } from './templateService.js';
 
@@ -77,23 +83,26 @@ async function downloadAsBuffer(actor: AuthContext, bucket: string, path: string
   return Buffer.from(await data.arrayBuffer());
 }
 
-/** Fetches the chosen photos (already shrunk when they were uploaded) as data: addresses. */
-async function loadPhotos(actor: AuthContext, ids: string[], max: number): Promise<string[]> {
+/** Fetches chosen photo bytes and captions in user-selected order. */
+async function loadPhotos(actor: AuthContext, ids: string[], max: number): Promise<DocumentPhoto[]> {
   if (ids.length === 0) return [];
   const fail = (message: string) =>
     new HttpError(400, 'VALIDATION_ERROR', 'Please correct the highlighted fields.', { photoIds: [message] });
   if (ids.length > max) throw fail(`This template allows at most ${max} photos.`);
 
-  const { data, error } = await actor.db.from('documents').select('id, storage_path, mime_type, kind').in('id', ids);
+  const { data, error } = await actor.db.from('documents').select('id, storage_path, mime_type, kind, caption').in('id', ids);
   if (error) throwDbError(error, 'Photos');
   const byId = new Map((data ?? []).map((d) => [d.id as string, d]));
-  const uris: string[] = [];
+  const uris: DocumentPhoto[] = [];
   for (const id of ids) {
     const d = byId.get(id);
     if (!d) throw fail('One of the chosen photos was not found.');
     if (d.kind !== 'photo' || !['image/jpeg', 'image/png'].includes(d.mime_type as string)) throw fail('Only photos can be placed in the report.');
     const bytes = await downloadAsBuffer(actor, DOCUMENTS_BUCKET, d.storage_path as string);
-    uris.push(`data:${d.mime_type as string};base64,${bytes.toString('base64')}`);
+    uris.push({
+      dataUri: `data:${d.mime_type as string};base64,${bytes.toString('base64')}`,
+      caption: typeof d.caption === 'string' ? d.caption : null,
+    });
   }
   return uris;
 }
@@ -110,9 +119,64 @@ async function loadLogo(actor: AuthContext, path: string | null): Promise<string
   }
 }
 
+async function renderDocumentPdf(
+  actor: AuthContext,
+  document: ReportTemplateDocument,
+  input: Pick<ReportTemplatePreviewInput, 'year' | 'quarter' | 'photoIds'>,
+  data: ReportData,
+): Promise<Buffer> {
+  const photoElements = document.pages.flatMap((page) => page.elements)
+    .filter((element) => element.type === 'photo_group' || element.type === 'photo');
+  const maxPhotos = photoElements.reduce((max, element) => Math.max(
+    max,
+    element.type === 'photo_group' ? element.startIndex + element.maxPhotos : element.index + 1,
+  ), 0);
+  if (maxPhotos === 0 && input.photoIds.length > 0) {
+    throw new HttpError(400, 'VALIDATION_ERROR', 'This template does not include photo elements.', {
+      photoIds: ['Remove selected photos or add a photo element to the template.'],
+    });
+  }
+  const photos = maxPhotos > 0 ? await loadPhotos(actor, input.photoIds, maxPhotos) : [];
+  const logoElement = document.pages.some((page) =>
+    page.header.showLogo || page.footer.showLogo || page.elements.some((element) => element.type === 'logo'));
+  const logoDataUri = logoElement ? await loadLogo(actor, document.logoPath) : null;
+  const rendered = renderReportDocumentHtml({
+    document, data, year: input.year, quarter: input.quarter, photos, logoDataUri,
+    generatedOn: manilaToday(), fontCss: embeddedFontCss(), preparedByName: actor.fullName,
+  });
+  const firstPage = document.pages[0]!;
+  const { width, height } = pageDimensions(firstPage.settings);
+  const result = await pdfRenderer.renderWithDiagnostics({
+    html: rendered.html,
+    width,
+    height,
+    footerHtml: '<span></span>',
+    margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' },
+    preferCssPageSize: true,
+    displayHeaderFooter: false,
+  });
+  const warnings = [...rendered.warnings, ...result.warnings];
+  if (warnings.length > 0) {
+    throw new HttpError(422, 'TEMPLATE_LAYOUT_INVALID', 'The template layout has issues that must be fixed before a report can be generated.', {
+      layout: warnings.map((warning) => `${warning.elementId}: ${warning.message}`),
+    });
+  }
+  return result.pdf;
+}
+
 /** For the "review the numbers" screen. No PDF is made. */
 export async function previewReport(actor: AuthContext, year: number, quarter: number): Promise<ReportData> {
   return loadReportData(actor, year, quarter);
+}
+
+/** Renders an unsaved v2 template for the editor; it does not save a template or report record. */
+export async function previewTemplatePdf(actor: AuthContext, input: ReportTemplatePreviewInput): Promise<Buffer> {
+  const parsed = reportTemplateDocumentSchema.safeParse(input.document);
+  if (!parsed.success) {
+    throw new HttpError(422, 'TEMPLATE_INVALID', 'The template settings are invalid.');
+  }
+  const data = await loadReportData(actor, input.year, input.quarter);
+  return renderDocumentPdf(actor, parsed.data, input, data);
 }
 
 /**
@@ -124,19 +188,27 @@ export async function generateReport(actor: AuthContext, input: GenerateReportIn
   if (!template) {
     throw new HttpError(409, 'NO_TEMPLATE', 'No report template is set up yet. Ask the General Manager to set up the official template.');
   }
-  const config = template.config;
-
   const data = await loadReportData(actor, input.year, input.quarter);
-  const photos = config.photos.enabled ? await loadPhotos(actor, input.photoIds, config.photos.maxPhotos) : [];
-  const logoDataUri = await loadLogo(actor, config.header.logoPath);
-
-  const html = renderReportHtml({
-    config, data, year: input.year, quarter: input.quarter, photos, logoDataUri,
-    generatedOn: manilaToday(), fontCss: embeddedFontCss(),
-  });
-  const pdf = await pdfRenderer.render({
-    html, ...pageDimensions(config.page), footerHtml: footerTemplate(config), margin: { ...PDF_MARGIN },
-  });
+  const generatedOn = manilaToday();
+  let pdf: Buffer;
+  let generatedPhotoCount = 0;
+  if (isDocumentTemplate(template.config)) {
+    const document: ReportTemplateDocument = template.config;
+    generatedPhotoCount = input.photoIds.length;
+    pdf = await renderDocumentPdf(actor, document, input, data);
+  } else {
+    const config = template.config;
+    const photos = config.photos.enabled ? await loadPhotos(actor, input.photoIds, config.photos.maxPhotos) : [];
+    generatedPhotoCount = photos.length;
+    const logoDataUri = await loadLogo(actor, config.header.logoPath);
+    const html = renderReportHtml({
+      config, data, year: input.year, quarter: input.quarter, photos: photos.map((photo) => photo.dataUri), logoDataUri,
+      generatedOn, fontCss: embeddedFontCss(),
+    });
+    pdf = await pdfRenderer.render({
+      html, ...pageDimensions(config.page), footerHtml: footerTemplate(config), margin: { ...PDF_MARGIN },
+    });
+  }
 
   const fileName = `ATI-Quarterly-Accomplishment-Report-${input.year}-Q${input.quarter}.pdf`;
   const path = `${input.year}/Q${input.quarter}/${randomUUID()}.pdf`;
@@ -166,8 +238,8 @@ export async function generateReport(actor: AuthContext, input: GenerateReportIn
   const record = toRecord(saved);
 
   // Remember which photos went in. The PDF is already valid, so a problem here is logged, not fatal.
-  let linked = photos.length;
-  if (photos.length > 0) {
+  let linked = generatedPhotoCount;
+  if (generatedPhotoCount > 0) {
     const links = input.photoIds.map((id, i) => ({ report_id: record.id, document_id: id, sort_order: i }));
     const link = await actor.db.from('report_documents').insert(links);
     if (link.error) {

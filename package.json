@@ -15,7 +15,7 @@
     "dev": "npm run build:shared && npm run build -w @harvestgo/api && concurrently -n api,web -c green,blue \"npm run dev -w @harvestgo/api\" \"npm run dev -w @harvestgo/web\"",
     "build": "npm run build:shared && npm run build -w @harvestgo/api && npm run build -w @harvestgo/web",
     "typecheck": "npm run build:shared && npm run typecheck -w @harvestgo/api && npm run typecheck -w @harvestgo/web",
-    "test": "npm run build:shared && npm run test -w @harvestgo/api"
+    "test": "npm run build:shared && npm run test -w @harvestgo/api && npm run test -w @harvestgo/web"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

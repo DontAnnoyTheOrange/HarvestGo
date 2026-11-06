@@ -6,7 +6,9 @@ import { useEffect, useId, useRef, type ReactNode } from 'react';
  * A pop-up box built on the browser's own <dialog>, which already handles
  * keyboard focus, the Esc key and screen readers correctly.
  */
-export function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+export function Dialog({
+  title, onClose, children, className = 'max-w-md',
+}: { title: string; onClose: () => void; children: ReactNode; className?: string }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -18,7 +20,7 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
   return (
     <dialog
       ref={ref} onClose={onClose} aria-labelledby={titleId}
-      className="m-auto w-full max-w-md rounded-2xl border-2 border-leaf-100 bg-white p-0 text-leaf-900 backdrop:bg-black/50"
+      className={`m-auto w-full ${className} rounded-2xl border-2 border-leaf-100 bg-white p-0 text-leaf-900 backdrop:bg-black/50`}
     >
       <div className="p-6">
         <h2 id={titleId} className="mb-4 text-xl font-semibold">{title}</h2>

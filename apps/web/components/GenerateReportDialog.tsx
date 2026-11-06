@@ -54,8 +54,15 @@ export function GenerateReportDialog({ template, onDone, onClose }: {
   const [error, setError] = useState<string | null>(null);
 
   const range = quarterRange(year, quarter);
-  const photosOn = template.config.photos.enabled;
-  const maxPhotos = template.config.photos.maxPhotos;
+  const photoElements = template.config.schemaVersion === 2
+    ? template.config.pages.flatMap((page) => page.elements).filter((element) => element.type === 'photo_group' || element.type === 'photo')
+    : [];
+  const photosOn = template.config.schemaVersion === 1
+    ? template.config.photos.enabled
+    : photoElements.length > 0;
+  const maxPhotos = template.config.schemaVersion === 1
+    ? template.config.photos.maxPhotos
+    : photoElements.reduce((max, element) => Math.max(max, element.type === 'photo_group' ? element.startIndex + element.maxPhotos : element.index + 1), 0);
   const preview = useApi(`/reports/preview?year=${year}&quarter=${quarter}`, previewAnswer);
   const photos = useApi(photosOn ? `/documents?kind=photo&from=${range.from}&to=${range.to}&pageSize=100&sort=date_asc` : null, documentListSchema);
   const years = [now.year, now.year - 1, now.year - 2, now.year - 3];

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { QUARTERS, activeTemplateSchema, currentQuarterInManila, reportListSchema, type ReportList, type ReportRecord } from '@harvestgo/shared';
+import { QUARTERS, activeTemplateSchema, currentQuarterInManila, reportListSchema, type ReportList, type ReportRecord, type ReportTemplateDocument } from '@harvestgo/shared';
 import { ApiRequestError, apiFetch } from '@/lib/api';
 import { QUARTER_LABELS } from '@/lib/format';
 import { useApi } from '@/lib/useApi';
@@ -11,13 +11,15 @@ import { inputClass, primaryButton, secondaryButton } from './Dialog';
 import { GenerateReportDialog } from './GenerateReportDialog';
 import { Pagination } from './Pagination';
 import { ReportDownloadDialog } from './ReportDownloadDialog';
+import { TemplateEditorDialog } from './TemplateEditorDialog';
+import { DocumentTemplateEditor } from './DocumentTemplateEditor';
 
 const PAGE_SIZE = 20;
 const size = (b: number | null) => (b === null ? '' : b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 const when = (iso: string) => new Date(iso).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' });
 
 type Load = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; data: ReportList };
-type Open = { kind: 'none' } | { kind: 'generate' } | { kind: 'download'; record: ReportRecord } | { kind: 'delete'; record: ReportRecord };
+type Open = { kind: 'none' } | { kind: 'generate' } | { kind: 'download'; record: ReportRecord } | { kind: 'delete'; record: ReportRecord } | { kind: 'template' } | { kind: 'document-template'; initial?: ReportTemplateDocument };
 
 export function ReportManager() {
   const me = useCurrentUser();
@@ -75,6 +77,8 @@ export function ReportManager() {
   }
 
   const active = template.state.status === 'ready' ? template.state.data.template : null;
+  const activeDocument: ReportTemplateDocument | undefined =
+    active?.config.schemaVersion === 2 ? active.config : undefined;
 
   return (
     <div className="space-y-5">
@@ -100,14 +104,30 @@ export function ReportManager() {
           {isManager ? (
             <>
               <p className="mt-1 text-sm">The template is the layout of the PDF. Set up the official ATI-QF/PAD-119 layout to start making reports.</p>
-              <button onClick={() => void setUpOfficial()} disabled={settingUp} className={`${primaryButton} mt-3`}>{settingUp ? 'Setting up...' : 'Set up the official ATI template'}</button>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <button onClick={() => void setUpOfficial()} disabled={settingUp} className={primaryButton}>{settingUp ? 'Setting up...' : 'Set up the official ATI template'}</button>
+                <button onClick={() => setOpen({ kind: 'template' })} className={secondaryButton}>Edit template settings</button>
+                <button onClick={() => setOpen({ kind: 'document-template' })} className={secondaryButton}>Create flexible template</button>
+              </div>
             </>
           ) : (
             <p className="mt-1 text-sm">Please ask the General Manager to set up the official template.</p>
           )}
         </div>
       )}
-      {active && <p className="text-sm text-leaf-900/60">Layout in use: {active.name}, version {active.version}.</p>}
+      {active && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-leaf-100 bg-white p-3">
+          <p className="text-sm text-leaf-900/60">Layout in use: {active.name}, version {active.version}.</p>
+          {isManager && (
+            <div className="flex flex-wrap gap-2">
+              {active.config.schemaVersion === 1
+                ? <button onClick={() => setOpen({ kind: 'template' })} className={secondaryButton}>Edit template</button>
+                : <button onClick={() => setOpen({ kind: 'document-template', initial: activeDocument })} className={secondaryButton}>Edit flexible template</button>}
+              <button onClick={() => setOpen({ kind: 'document-template' })} className={secondaryButton}>Create flexible template</button>
+            </div>
+          )}
+        </div>
+      )}
 
       <fieldset className="grid gap-3 rounded-xl border-2 border-leaf-100 bg-white p-4 sm:grid-cols-3">
         <legend className="px-2 text-sm font-semibold">Filter</legend>
@@ -140,6 +160,29 @@ export function ReportManager() {
         <div className="rounded-xl border-2 border-dashed border-leaf-100 bg-white p-8 text-center">
           {filtered ? <p>No reports match these filters.</p> : <p>No reports have been made yet.</p>}
         </div>
+      )}
+
+      {open.kind === 'template' && isManager && (
+        <TemplateEditorDialog
+          initial={active?.config.schemaVersion === 1 ? active.config : undefined}
+          onClose={() => setOpen({ kind: 'none' })}
+          onSaved={() => {
+            setNotice('Template settings updated.');
+            setOpen({ kind: 'none' });
+            template.reload();
+          }}
+        />
+      )}
+      {open.kind === 'document-template' && isManager && (
+        <DocumentTemplateEditor
+          initial={open.initial}
+          onClose={close}
+          onSaved={() => {
+            setNotice('Flexible template published. New reports will use this version.');
+            close();
+            template.reload();
+          }}
+        />
       )}
 
       {load.status === 'ready' && load.data.total > 0 && (

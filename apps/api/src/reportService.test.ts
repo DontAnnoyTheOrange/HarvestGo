@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { OFFICIAL_TEMPLATE_CONFIG, OFFICIAL_TEMPLATE_NAME } from '@harvestgo/shared';
+import { OFFICIAL_TEMPLATE_CONFIG, OFFICIAL_TEMPLATE_NAME, reportTemplateDocumentSchema } from '@harvestgo/shared';
 
-const renderer = vi.hoisted(() => ({ render: vi.fn() }));
+const renderer = vi.hoisted(() => ({ render: vi.fn(), renderWithDiagnostics: vi.fn() }));
 vi.mock('./reports/pdfRenderer.js', () => ({ pdfRenderer: renderer }));
 
-import { createReportUrl, deleteReport, generateReport, listReports, previewReport } from './services/reportService.js';
-import { installOfficialTemplate } from './services/templateService.js';
+import { createReportUrl, deleteReport, generateReport, listReports, previewReport, previewTemplatePdf } from './services/reportService.js';
+import {
+  deleteTemplateDraft, getTemplateDraft, installOfficialTemplate, saveTemplateConfig, saveTemplateDraft,
+} from './services/templateService.js';
 
 /** A pretend database call: any chain of .select().eq()... finally resolves to `result`. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,7 +30,7 @@ const photoId = '3f2a4d3e-6a52-4b52-9a4e-1c2d3e4f5a6b';
 const photoId2 = '4f2a4d3e-6a52-4b52-9a4e-1c2d3e4f5a6b';
 
 function fakeDb(answers: unknown[], opts: { rpc?: unknown; upload?: unknown; download?: unknown; signed?: unknown; remove?: unknown } = {}) {
-  const from = vi.fn();
+  const from = vi.fn().mockReturnValue(chain({ data: null, error: null }));
   for (const a of answers) from.mockReturnValueOnce(chain(a));
   const upload = vi.fn().mockResolvedValue(opts.upload ?? { data: {}, error: null });
   const remove = vi.fn().mockResolvedValue(opts.remove ?? { data: [], error: null });
@@ -41,9 +43,36 @@ function fakeDb(answers: unknown[], opts: { rpc?: unknown; upload?: unknown; dow
 const actor = (role: string, userId: string, db: unknown) => ({ userId, role, db }) as never;
 const input = { year: 2026, quarter: 2, photoIds: [] as string[] };
 
+function v2Document(name = 'Custom report') {
+  return reportTemplateDocumentSchema.parse({
+    schemaVersion: 2,
+    name,
+    farm: { name: 'Kabutihan Farm', shortName: 'Kabutihan' },
+    logoPath: null,
+    pages: [{
+      id: 'preview-page',
+      name: 'Preview page',
+      settings: { size: 'letter', orientation: 'portrait', margins: { top: 10, right: 10, bottom: 10, left: 10 } },
+      layout: { mode: 'flow', columns: 1, gapMm: 0 },
+      backgroundColor: null,
+      border: { enabled: false, color: '#000000', widthMm: 0 },
+      header: { enabled: false, lines: [], alignment: 'left', showLogo: false, showPageNumber: false },
+      footer: { enabled: false, lines: [], alignment: 'left', showLogo: false, showPageNumber: false },
+      elements: [{
+        id: 'title',
+        type: 'report_title',
+        text: 'Quarterly report',
+        placement: { mode: 'flow', column: 0, columnSpan: 1 },
+        fontSizePt: 18,
+      }],
+    }],
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   renderer.render.mockResolvedValue(Buffer.from('%PDF'));
+  renderer.renderWithDiagnostics.mockResolvedValue({ pdf: Buffer.from('%PDFv2'), warnings: [] });
 });
 
 describe('generateReport', () => {
@@ -65,6 +94,121 @@ describe('generateReport', () => {
     expect(options).toEqual({ contentType: 'application/pdf', upsert: false });
 
     expect(rec).toMatchObject({ periodYear: 2026, periodQuarter: 2, fileName: 'ATI-Quarterly-Accomplishment-Report-2026-Q2.pdf', generatedByName: 'Staff Bee', photoCount: 0, templateVersion: 1 });
+  });
+
+  describe('previewTemplatePdf', () => {
+    it('renders the unsaved v2 document without uploading a PDF or inserting report history', async () => {
+      const db = fakeDb([]);
+      const document = v2Document();
+      const pdf = await previewTemplatePdf(actor('general_manager', 'gm', db), {
+        document, year: 2026, quarter: 2, photoIds: [],
+      });
+
+      expect(pdf).toEqual(Buffer.from('%PDFv2'));
+      expect(db.rpc).toHaveBeenCalledWith('report_quarter_data', { p_year: 2026, p_quarter: 2 });
+      expect(db.from).not.toHaveBeenCalled();
+      expect(db.upload).not.toHaveBeenCalled();
+      expect(renderer.renderWithDiagnostics).toHaveBeenCalledTimes(1);
+      expect(renderer.renderWithDiagnostics.mock.calls[0]![0].html).toContain('Quarterly report');
+    });
+
+    it('rejects invalid layout warnings instead of showing an apparently valid preview', async () => {
+      renderer.renderWithDiagnostics.mockResolvedValueOnce({
+        pdf: Buffer.from('%PDFv2'),
+        warnings: [{ elementId: 'title', message: 'Element extends beyond the page.' }],
+      });
+      await expect(previewTemplatePdf(actor('general_manager', 'gm', fakeDb([])), {
+        document: v2Document(), year: 2026, quarter: 2, photoIds: [],
+      })).rejects.toMatchObject({ status: 422, code: 'TEMPLATE_LAYOUT_INVALID' });
+    });
+  });
+
+  describe('saveTemplateConfig', () => {
+    it('saves a named v2 template version without changing the existing versioning RPC', async () => {
+      const document = v2Document('My flexible report');
+      const db = fakeDb([{
+        data: { ...templateRow, name: document.name, version: 3, config: document },
+        error: null,
+      }]);
+
+      const active = await saveTemplateConfig(actor('general_manager', 'gm', db), document);
+
+      expect(db.rpc).toHaveBeenCalledWith('install_report_template', {
+        p_name: 'My flexible report',
+        p_config: document,
+      });
+      expect(active).toMatchObject({ name: 'My flexible report', version: 3, config: document, isActive: true });
+    });
+  });
+
+  describe('report template drafts', () => {
+    it('loads, saves, and discards a validated v2 draft', async () => {
+      const document = v2Document('Draft report');
+      const db = fakeDb([
+        { data: { config: document, updated_at: '2026-11-06T08:00:00Z' }, error: null },
+        { data: { config: document, updated_at: '2026-11-06T08:01:00Z' }, error: null },
+      ]);
+
+      await expect(getTemplateDraft(actor('general_manager', 'gm', db))).resolves.toEqual({
+        document,
+        updatedAt: '2026-11-06T08:00:00Z',
+      });
+      await expect(saveTemplateDraft(actor('general_manager', 'gm', db), document)).resolves.toEqual({
+        document,
+        updatedAt: '2026-11-06T08:01:00Z',
+      });
+      expect(db.from).toHaveBeenNthCalledWith(2, 'report_template_drafts');
+      await expect(deleteTemplateDraft(actor('general_manager', 'gm', db))).resolves.toBeUndefined();
+      expect(db.from).toHaveBeenNthCalledWith(3, 'report_template_drafts');
+    });
+  });
+
+  it('uses the v2 document renderer only for schema-version-2 templates', async () => {
+    const document = reportTemplateDocumentSchema.parse({
+      schemaVersion: 2,
+      name: 'Custom report',
+      farm: { name: 'Kabutihan Farm', shortName: 'Kabutihan' },
+      logoPath: 'custom-logo.png',
+      pages: [{
+        id: 'page-one',
+        name: 'Page one',
+        settings: { size: 'a4', orientation: 'portrait', margins: { top: 10, right: 12, bottom: 10, left: 12 } },
+        layout: { mode: 'flow', columns: 1, gapMm: 0 },
+        backgroundColor: null,
+        border: { enabled: false, color: '#000000', widthMm: 0 },
+        header: { enabled: false, lines: [], alignment: 'left', showLogo: false, showPageNumber: false },
+        footer: { enabled: true, lines: [], alignment: 'left', showLogo: true, showPageNumber: false },
+        elements: [{
+          id: 'title',
+          type: 'report_title',
+          text: 'Custom quarterly report',
+          placement: { mode: 'flow', column: 0, columnSpan: 1 },
+          fontSizePt: 18,
+          bold: true,
+          alignment: 'center',
+        }],
+      }],
+    });
+    const db = fakeDb([
+      { data: { ...templateRow, name: 'Custom report', config: document }, error: null },
+      { data: savedRow, error: null },
+    ]);
+
+    await generateReport(actor('administrative_staff', 'u1', db), input);
+
+    expect(renderer.renderWithDiagnostics).toHaveBeenCalledTimes(1);
+    expect(renderer.render).not.toHaveBeenCalled();
+    expect(renderer.renderWithDiagnostics.mock.calls[0]![0]).toMatchObject({
+      width: '210mm',
+      height: '297mm',
+      preferCssPageSize: true,
+      displayHeaderFooter: false,
+    });
+    expect(renderer.renderWithDiagnostics.mock.calls[0]![0].html).toContain('Custom quarterly report');
+    expect(db.bucket).toHaveBeenCalledWith('harvestgo-template-assets');
+    expect(db.download).toHaveBeenCalledWith('custom-logo.png');
+    expect(renderer.renderWithDiagnostics.mock.calls[0]![0].html).toContain('data:image/jpeg;base64,AQID');
+    expect(db.upload.mock.calls[0]?.[1]).toEqual(Buffer.from('%PDFv2'));
   });
 
   it('puts the chosen photos into the report, in the chosen order, and remembers them', async () => {

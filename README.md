@@ -11,6 +11,7 @@ HarvestGo is a standalone web-based management and reporting platform developed 
 - **Harvest & Sales Records:** Track crop production, yields, operational expenses, and sales data (raw and value-added items).
 - **Training & Seminar Records:** Monitor service activities (trainings, technical assistance, IEC distribution) and capture participant head-counts disaggregated by demographic types (Male/Female counts, strictly non-personally identifiable).
 - **ATI-Form Template Generator:** Automatically generate the official quarterly accomplishment report conforming to **ATI-QF/PAD-119 Rev. 00** (5-page landscape layout) via Puppeteer.
+- **Flexible Report Templates:** General Managers can create and edit v2 templates with page-specific sizes, headers and footers, flow or positioned elements, tables, signatures, and photo groups. Drafts are separately saved and can be previewed as PDFs before publishing an immutable version; the official ATI layout remains on its existing renderer.
 - **Operational Issues Tracker:** Log farm problems, actions taken, and recommendations.
 - **Security & Identity Management:** Role-based access control (General Manager vs. Administrative Staff), Row-Level Security (RLS), secure cookie-based session handling, and CSRF protection.
 
@@ -70,8 +71,8 @@ SUPABASE_URL=your_supabase_project_url
 SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 
-3. Database Migration
-Apply the core schema migration (0001_core_schema.sql) located in supabase/migrations/ to your Supabase project instance using the Supabase CLI or SQL editor. This provisions the 14 core tables, custom enums, RLS policies, and helper functions.
+3. Database Migrations
+Apply the migrations in `supabase/migrations/` in order to your Supabase project instance using the Supabase CLI or SQL editor. Migration 0005 adds General-Manager-only storage for flexible template drafts and atomically clears a draft when its v2 version is published.
 
 4. Running the Development Servers
 To build the shared package and start both the API server (port 4000) and the Next.js web application (port 3000) concurrently, run:
@@ -90,4 +91,3 @@ Administrative Staff: Can log harvests, sales, expenses, and service activities.
 📄 License & Compliance Notes
 Developed for educational purposes under Cavite State University.
 Note on Data Privacy: Technical and architectural controls support compliance with RA 10173 (Data Privacy Act of 2012), but formal legal compliance requires organization-level administrative review.
-

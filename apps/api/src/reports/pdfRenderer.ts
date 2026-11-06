@@ -7,6 +7,13 @@ export interface PdfJob {
   height: string;
   footerHtml: string;
   margin: { top: string; right: string; bottom: string; left: string };
+  preferCssPageSize?: boolean;
+  displayHeaderFooter?: boolean;
+}
+
+export interface PdfRenderResult {
+  pdf: Buffer;
+  warnings: { elementId: string; message: string }[];
 }
 
 const RENDER_TIMEOUT_MS = 55_000; // a first report on a serverless host also has to fetch the browser
@@ -52,11 +59,20 @@ export class PdfRenderer {
   private idleTimer: NodeJS.Timeout | null = null;
 
   async render(job: PdfJob): Promise<Buffer> {
+    const result = await this.enqueue(job, false);
+    return result.pdf;
+  }
+
+  async renderWithDiagnostics(job: PdfJob): Promise<PdfRenderResult> {
+    return this.enqueue(job, true);
+  }
+
+  private async enqueue(job: PdfJob, collectDiagnostics: boolean): Promise<PdfRenderResult> {
     if (this.waiting >= MAX_WAITING) {
       throw new HttpError(429, 'BUSY', 'The system is busy making other reports. Please try again in a minute.');
     }
     this.waiting += 1;
-    const mine = this.line.then(() => this.run(job));
+    const mine = this.line.then(() => this.run(job, collectDiagnostics));
     this.line = mine.catch(() => undefined);
     try {
       return await mine;
@@ -99,7 +115,7 @@ export class PdfRenderer {
     return this.browser;
   }
 
-  private async run(job: PdfJob): Promise<Buffer> {
+  private async run(job: PdfJob, collectDiagnostics: boolean): Promise<PdfRenderResult> {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     const browser = await this.ensureBrowser();
     const page = await browser.newPage();
@@ -114,17 +130,26 @@ export class PdfRenderer {
         else void req.abort();
       });
       await page.setContent(job.html, { waitUntil: 'load', timeout: RENDER_TIMEOUT_MS });
+      const warnings = collectDiagnostics
+        ? await page.evaluate(() => Array.from(document.querySelectorAll<HTMLElement>('[data-preflight="positioned"]'))
+          .filter((element) => element.scrollHeight > element.clientHeight + 1 || element.scrollWidth > element.clientWidth + 1)
+          .map((element) => ({
+            elementId: element.dataset.layoutId ?? 'unknown',
+            message: 'Positioned content exceeds its assigned box and may overlap nearby content.',
+          })))
+        : [];
       const pdf = await page.pdf({
         width: job.width,
         height: job.height,
         margin: job.margin,
         printBackground: true,
-        displayHeaderFooter: true,
+        preferCSSPageSize: job.preferCssPageSize ?? false,
+        displayHeaderFooter: job.displayHeaderFooter ?? true,
         headerTemplate: '<span></span>',
         footerTemplate: job.footerHtml,
         timeout: RENDER_TIMEOUT_MS,
       });
-      return Buffer.from(pdf);
+      return { pdf: Buffer.from(pdf), warnings };
     } catch (err) {
       if (err instanceof HttpError) throw err;
       throw new ServiceUnavailableError(`PDF creation failed: ${err instanceof Error ? err.message : String(err)}`);
